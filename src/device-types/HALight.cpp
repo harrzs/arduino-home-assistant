@@ -30,7 +30,7 @@ void HALight::RGBColor::fromBuffer(const uint8_t* data, const uint16_t length)
     if (firstCommaPos == 0 || secondCommaPos == 0) {
         return;
     }
-
+    
     const uint8_t redLen = firstCommaPos;
     const uint8_t greenLen = secondCommaPos - firstCommaPos - 1; // minus comma
     const uint8_t blueLen = length - redLen - greenLen - 2; // minus two commas
@@ -380,19 +380,8 @@ bool HALight::publishRGBColor(const RGBColor& color)
         return false;
     }
 
-    char str[RGBStringMaxLength] = {0};
-    uint16_t len = 0;
-
-    // append red color with comma
-    len += HANumeric(color.red, 0).toStr(&str[0]);
-    str[len++] = ',';
-
-    // append green color with comma
-    len += HANumeric(color.green, 0).toStr(&str[len]);
-    str[len++] = ',';
-
-    // append blue color
-    HANumeric(color.blue, 0).toStr(&str[len]);
+    char str[RGBStringMaxLength + 1];
+    sprintf(str, AHAFROMFSTR(F("%d,%d,%d")), color.red, color.green, color.blue);
 
     return publishOnDataTopic(AHATOFSTR(HARGBStateTopic), str, true);
 }
@@ -403,23 +392,8 @@ bool HALight::publishRGBWColor(const RGBWColor& color)
         return false;
     }
 
-    char str[RGBWStringMaxLength] = {0};
-    uint16_t len = 0;
-
-    // append red color with comma
-    len += HANumeric(color.red, 0).toStr(&str[0]);
-    str[len++] = ',';
-
-    // append green color with comma
-    len += HANumeric(color.green, 0).toStr(&str[len]);
-    str[len++] = ',';
-
-    // append blue color
-    len += HANumeric(color.blue, 0).toStr(&str[len]);
-    str[len++] = ',';
-
-    // append white color
-    HANumeric(color.white, 0).toStr(&str[len]);
+    char str[RGBWStringMaxLength + 1];
+    sprintf(str, AHAFROMFSTR(F("%d,%d,%d,%d")), color.red, color.green, color.blue, color.white);
 
     return publishOnDataTopic(AHATOFSTR(HARGBWStateTopic), str, true);
 }
