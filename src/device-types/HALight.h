@@ -10,6 +10,7 @@
 #define HALIGHT_BRIGHTNESS_CALLBACK(name) void (*name)(uint8_t brightness, HALight* sender)
 #define HALIGHT_COLOR_TEMP_CALLBACK(name) void (*name)(uint16_t temperature, HALight* sender)
 #define HALIGHT_RGB_COLOR_CALLBACK(name) void (*name)(HALight::RGBColor color, HALight* sender)
+#define HALIGHT_RGBW_COLOR_CALLBACK(name) void (*name)(HALight::RGBWColor color, HALight* sender)
 
 /**
  * HALight allows adding a controllable light in the Home Assistant panel.
@@ -24,12 +25,14 @@ class HALight : public HABaseDeviceType
 {
 public:
     static const uint8_t RGBStringMaxLength;
+    static const uint8_t RGBWStringMaxLength;
 
     enum Features {
         DefaultFeatures = 0,
         BrightnessFeature = 1,
         ColorTemperatureFeature = 2,
-        RGBFeature = 4
+        RGBFeature = 4,
+        RGBWFeature = 8
     };
 
     struct RGBColor {
@@ -64,6 +67,48 @@ public:
                 red != a.red ||
                 green != a.green ||
                 blue != a.blue
+            );
+        }
+
+        void fromBuffer(const uint8_t* data, const uint16_t length);        
+    };
+
+    struct RGBWColor {
+        uint8_t red;
+        uint8_t green;
+        uint8_t blue;
+        uint8_t white;
+        bool isSet;
+
+        RGBWColor() :
+            red(0), green(0), blue(0), white(0), isSet(false) { }
+
+        RGBWColor(uint8_t r, uint8_t g, uint8_t b, uint8_t w) :
+            red(r), green(g), blue(b), white(w), isSet(true) { }
+
+        void operator= (const RGBWColor& a) {
+            red = a.red;
+            green = a.green;
+            blue = a.blue;
+            white = a.white;
+            isSet = a.isSet;
+        }
+
+        bool operator== (const RGBWColor& a) const {
+            return (
+                red == a.red &&
+                green == a.green &&
+                blue == a.blue &&
+                white == a.white
+            );
+        }
+
+        bool operator!= (const RGBWColor& a) const {
+            return (
+                red != a.red ||
+                green != a.green ||
+                blue != a.blue ||
+                white != a.white
             );
         }
 
@@ -121,6 +166,17 @@ public:
      * @returns Returns `true` if MQTT message has been published successfully.
      */
     bool setRGBColor(const RGBColor& color, const bool force = false);
+
+    /**
+     * Changes the RGBW color of the light and publishes MQTT message.
+     * Please note that if a new color is the same as previous one,
+     * the MQTT message won't be published.
+     *
+     * @param color The new RGBW color of the light.
+     * @param force Forces to update the value without comparing it to a previous known value.
+     * @returns Returns `true` if MQTT message has been published successfully.
+     */
+    bool setRGBWColor(const RGBWColor& color, const bool force = false);
 
     /**
      * Alias for `setState(true)`.
@@ -201,6 +257,23 @@ public:
      */
     inline const RGBColor& getCurrentRGBColor() const
         { return _currentRGBColor; }
+
+    /**
+     * Sets the current RGBW color of the light without pushing the value to Home Assistant.
+     * This method may be useful if you want to change the color before the connection
+     * with the MQTT broker is acquired.
+     *
+     * @param color The new RGBW color.
+     */
+    inline void setCurrentRGBWColor(const RGBWColor& color)
+        { _currentRGBWColor = color; }
+
+    /**
+     * Returns the last known RGBW color of the light.
+     * By default the RGBW color is set to `0,0,0`.
+     */
+    inline const RGBWColor& getCurrentRGBWColor() const
+        { return _currentRGBWColor; }
 
     /**
      * Sets icon of the light.
@@ -297,6 +370,16 @@ public:
     inline void onRGBColorCommand(HALIGHT_RGB_COLOR_CALLBACK(callback))
         { _rgbColorCallback = callback; }
 
+    /**
+     * Registers callback that will be called each time the RGBW color command from HA is received.
+     * Please note that it's not possible to register multiple callbacks for the same light.
+     *
+     * @param callback
+     * @note In non-optimistic mode, the color must be reported back to HA using the HALight::setRGBWColor method.
+     */
+    inline void onRGBWColorCommand(HALIGHT_RGBW_COLOR_CALLBACK(callback))
+        { _rgbwColorCallback = callback; }
+
 protected:
     virtual void buildSerializer() override;
     virtual void onMqttConnected() override;
@@ -340,6 +423,14 @@ private:
     bool publishRGBColor(const RGBColor& color);
 
     /**
+     * Publishes the MQTT message with the given RGBW color.
+     *
+     * @param color The color to publish.
+     * @returns Returns `true` if the MQTT message has been published successfully.
+     */
+    bool publishRGBWColor(const RGBWColor& color);
+
+    /**
      * Parses the given state command and executes the callback with proper value.
      *
      * @param cmd The data of the command.
@@ -371,6 +462,14 @@ private:
      */
     void handleRGBCommand(const uint8_t* cmd, const uint16_t length);
 
+    /**
+     * Parses the given RGBW color command and executes the callback with proper value.
+     *
+     * @param cmd The data of the command.
+     * @param length Length of the command.
+     */
+    void handleRGBWCommand(const uint8_t* cmd, const uint16_t length);
+
     /// Features enabled for the light.
     const uint8_t _features;
 
@@ -401,8 +500,11 @@ private:
     /// The current color temperature (mireds). By default the value is not set.
     uint16_t _currentColorTemperature;
 
-    /// The current RBB color. By default the value is not set.
+    /// The current RGB color. By default the value is not set.
     RGBColor _currentRGBColor;
+
+    /// The current RGBW color. By default the value is not set.
+    RGBWColor _currentRGBWColor;
 
     /// The callback that will be called when the state command is received from the HA.
     HALIGHT_STATE_CALLBACK(_stateCallback);
@@ -415,6 +517,9 @@ private:
 
     /// The callback that will be called when the RGB command is received from the HA.
     HALIGHT_RGB_COLOR_CALLBACK(_rgbColorCallback);
+
+    /// The callback that will be called when the RGB command is received from the HA.
+    HALIGHT_RGBW_COLOR_CALLBACK(_rgbwColorCallback);
 };
 
 #endif

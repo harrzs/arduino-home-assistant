@@ -3,8 +3,10 @@
 
 #include "../HAMqtt.h"
 #include "../utils/HASerializer.h"
+#include "../ArduinoHADefines.h"
 
-const uint8_t HALight::RGBStringMaxLength = 3*4; // 4 characters per color
+const uint8_t HALight::RGBStringMaxLength = 3*3 + 2; // 3 characters per color + 2 commas
+const uint8_t HALight::RGBWStringMaxLength = 4*3 + 3; // 3 characters per color + 3 commas
 
 void HALight::RGBColor::fromBuffer(const uint8_t* data, const uint16_t length)
 {
@@ -45,6 +47,51 @@ void HALight::RGBColor::fromBuffer(const uint8_t* data, const uint16_t length)
     }
 }
 
+void HALight::RGBWColor::fromBuffer(const uint8_t* data, const uint16_t length)
+{
+    if (length > RGBWStringMaxLength) {
+        return;
+    }
+
+    uint8_t firstCommaPos = 0;
+    uint8_t secondCommaPos = 0;
+    uint8_t thirdCommaPos = 0;
+
+    for (uint8_t i = 0; i < length; i++) {
+        if (data[i] == ',') {
+            if (firstCommaPos == 0) {
+                firstCommaPos = i;
+            } else if (secondCommaPos == 0) {
+                secondCommaPos = i;
+            } else if (thirdCommaPos == 0) {
+                thirdCommaPos = i;
+            }
+        }
+    }
+
+    if (firstCommaPos == 0 || secondCommaPos == 0 || thirdCommaPos == 0) {
+        return;
+    }
+
+    const uint8_t redLen = firstCommaPos;
+    const uint8_t greenLen = secondCommaPos - firstCommaPos - 1; // minus comma
+    const uint8_t blueLen = thirdCommaPos - secondCommaPos - 1; // minus two commas
+    const uint8_t whiteLen = length - thirdCommaPos - 1; // minus two commas
+
+    const HANumeric& r = HANumeric::fromStr(data, redLen);
+    const HANumeric& g = HANumeric::fromStr(&data[redLen + 1], greenLen);
+    const HANumeric& b = HANumeric::fromStr(&data[redLen + greenLen + 2], blueLen);
+    const HANumeric& w = HANumeric::fromStr(&data[redLen + greenLen + blueLen + 3], whiteLen);
+
+    if (r.isUInt8() && g.isUInt8() && b.isUInt8() && w.isUInt8()) {
+        red = r.toUInt8();
+        green = g.toUInt8();
+        blue = b.toUInt8();
+        white = w.toUInt8();
+        isSet = true;
+    }
+}
+
 HALight::HALight(const char* uniqueId, const uint8_t features) :
     HABaseDeviceType(AHATOFSTR(HAComponentLight), uniqueId),
     _features(features),
@@ -58,10 +105,12 @@ HALight::HALight(const char* uniqueId, const uint8_t features) :
     _maxMireds(),
     _currentColorTemperature(0),
     _currentRGBColor(),
+    _currentRGBWColor(),
     _stateCallback(nullptr),
     _brightnessCallback(nullptr),
     _colorTemperatureCallback(nullptr),
-    _rgbColorCallback(nullptr)
+    _rgbColorCallback(nullptr),
+    _rgbwColorCallback(nullptr)
 {
 
 }
@@ -116,6 +165,20 @@ bool HALight::setRGBColor(const RGBColor& color, const bool force)
 
     if (publishRGBColor(color)) {
         _currentRGBColor = color;
+        return true;
+    }
+
+    return false;
+}
+
+bool HALight::setRGBWColor(const RGBWColor& color, const bool force)
+{
+    if (!force && color == _currentRGBWColor) {
+        return true;
+    }
+
+    if (publishRGBWColor(color)) {
+        _currentRGBWColor = color;
         return true;
     }
 
@@ -188,6 +251,11 @@ void HALight::buildSerializer()
         _serializer->topic(AHATOFSTR(HARGBStateTopic));
     }
 
+    if (_features & RGBWFeature) {
+        _serializer->topic(AHATOFSTR(HARGBWCommandTopic));
+        _serializer->topic(AHATOFSTR(HARGBWStateTopic));
+    }
+
     _serializer->set(HASerializer::WithDevice);
     _serializer->set(HASerializer::WithAvailability);
     _serializer->topic(AHATOFSTR(HAStateTopic));
@@ -208,6 +276,7 @@ void HALight::onMqttConnected()
         publishBrightness(_currentBrightness);
         publishColorTemperature(_currentColorTemperature);
         publishRGBColor(_currentRGBColor);
+        publishRGBWColor(_currentRGBWColor);
     }
 
     subscribeTopic(uniqueId(), AHATOFSTR(HACommandTopic));
@@ -222,6 +291,10 @@ void HALight::onMqttConnected()
 
     if (_features & RGBFeature) {
         subscribeTopic(uniqueId(), AHATOFSTR(HARGBCommandTopic));
+    }
+
+    if (_features & RGBWFeature) {
+        subscribeTopic(uniqueId(), AHATOFSTR(HARGBWCommandTopic));
     }
 }
 
@@ -257,6 +330,14 @@ void HALight::onMqttMessage(
         )
     ) {
         handleRGBCommand(payload, length);
+    } else if (
+        HASerializer::compareDataTopics(
+            topic,
+            uniqueId(),
+            AHATOFSTR(HARGBWCommandTopic)
+        )
+    ) {
+        handleRGBWCommand(payload, length);
     }
 }
 
@@ -316,6 +397,33 @@ bool HALight::publishRGBColor(const RGBColor& color)
     return publishOnDataTopic(AHATOFSTR(HARGBStateTopic), str, true);
 }
 
+bool HALight::publishRGBWColor(const RGBWColor& color)
+{
+    if (!(_features & RGBWFeature) || !color.isSet) {
+        return false;
+    }
+
+    char str[RGBWStringMaxLength] = {0};
+    uint16_t len = 0;
+
+    // append red color with comma
+    len += HANumeric(color.red, 0).toStr(&str[0]);
+    str[len++] = ',';
+
+    // append green color with comma
+    len += HANumeric(color.green, 0).toStr(&str[len]);
+    str[len++] = ',';
+
+    // append blue color
+    len += HANumeric(color.blue, 0).toStr(&str[len]);
+    str[len++] = ',';
+
+    // append white color
+    HANumeric(color.white, 0).toStr(&str[len]);
+
+    return publishOnDataTopic(AHATOFSTR(HARGBWStateTopic), str, true);
+}
+
 void HALight::handleStateCommand(const uint8_t* cmd, const uint16_t length)
 {
     (void)cmd;
@@ -366,6 +474,20 @@ void HALight::handleRGBCommand(const uint8_t* cmd, const uint16_t length)
 
     if (color.isSet) {
         _rgbColorCallback(color, this);
+    }
+}
+
+void HALight::handleRGBWCommand(const uint8_t* cmd, const uint16_t length)
+{
+    if (!_rgbwColorCallback) {
+        return;
+    }
+
+    RGBWColor color;
+    color.fromBuffer(cmd, length);
+
+    if (color.isSet) {
+        _rgbwColorCallback(color, this);
     }
 }
 
